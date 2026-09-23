@@ -6,20 +6,24 @@
 //! \param  cy    y-coordinate
 //! \param  n_max maximum number of iterations
 //! \return       number of performed iterations at coordinate (cx, cy)
-uint16_t calc_kandelbrot_point_soft(float cx, float cy, uint16_t n_max) {
-  float x = cx;
-  float y = cy;
+uint16_t calc_kandelbrot_point_soft(fxpt_9_23 cx, fxpt_9_23 cy,
+                                    uint16_t n_max) {
+  fxpt_9_23 x = cx;
+  fxpt_9_23 y = cy;
   uint16_t n = 0;
-  float xx, yy, two_xy;
+  fxpt_9_23 xx, yy, two_xy;
   do {
-    xx = x * x;
-    yy = y * y;
-    two_xy = 2 * x * y;
+    sx = x >> 12;
+    sy = y >> 12;
+    xx = (sx * sx) << 1;
+    yy = (sy * sy) << 1;
+    two_xy =
+        (sx * sy) << 2; // one shift for the moltiplication one for the fxpt
 
     x = xx - yy + cx;
     y = two_xy + cy;
     ++n;
-  } while (((xx + yy) < 4) && (n < n_max));
+  } while (((xx + yy) < 0x02000000) && (n < n_max));
   return n;
 }
 
@@ -111,9 +115,9 @@ void draw_fractal(rgb565 *fbuf, int width, int height, calc_frac_point_p cfp_p,
                   iter_to_colour_p i2c_p, float cx_0, float cy_0, float delta,
                   uint16_t n_max) {
   rgb565 *pixel = fbuf;
-  float cy = cy_0;
+  fxpt_8_23 cy = cy_0;
   for (int k = 0; k < height; ++k) {
-    float cx = cx_0;
+    fxpt_8_23 cx = cx_0;
     for (int i = 0; i < width; ++i) {
       uint16_t n_iter = (*cfp_p)(cx, cy, n_max);
       rgb565 colour = (*i2c_p)(n_iter, n_max);

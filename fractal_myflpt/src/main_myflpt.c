@@ -10,35 +10,23 @@
 const int SCREEN_WIDTH = 512;  //!< screen width
 const int SCREEN_HEIGHT = 512; //!< screen height
 
-typedef uint32_t myfloat;
-static inline myfloat to_myfloat(float n) {
-  union {
-    float f;
-    uint32_t u;
-  } c = {.f = n};
-
-  uint32_t sign = c.u & SIGN_MASK;
-  uint32_t mag = c.u & 0x7FFFFFFFu;
-  return sign + (((mag - DIFF) << 4) & 0x7FFFFFFFu); /* shift by 4 */
-}
-
 int main() {
-  float FRAC_WIDTH = 3.0; //!< default fractal width (3.0 in Q4.28)
-  myfloat CX_0 =
-      to_myfloat(-2.0); //!< default start x-coordinate (-2.0 in Q4.28)
-  myfloat CY_0 =
-      to_myfloat(-1.5); //!< default start y-coordinate (-1.5 in Q4.28)
-  uint16_t N_MAX = 64;  //!< maximum number of iterations
+  float FRAC_WIDTH = 3.0;    //!< default fractal width (3.0 in Q4.28)
+  myfloat CX_0 = 0xE8000000; //!< default start x-coordinate (-2.0 in Q4.28)
+  myfloat CY_0 = 0xE4000000; //!< default start y-coordinate (-1.5 in Q4.28)
+  uint16_t N_MAX = 64;       //!< maximum number of iterations
 
   volatile unsigned int *vga = (unsigned int *)0x50000020;
   volatile unsigned int reg, hi;
   rgb565 frameBuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
-  myfloat delta = to_myfloat(FRAC_WIDTH / SCREEN_WIDTH);
-  printf("cx: %08x \n", delta);
+  myfloat delta = 0x24000000; //! defined as FRAC_WIDTH/SCREEN_WIDTH and
+                              //! converted to myfloat
+
   int i;
   vga_clear();
   printf("Starting drawing a fractal\n");
 #ifdef __OR1300__
+  asm volatile("l.nop;l.nop;l.nop;l.nop;l.nop;");
   /* enable the caches */
   icache_write_cfg(CACHE_DIRECT_MAPPED | CACHE_SIZE_8K | CACHE_REPLACE_FIFO);
   dcache_write_cfg(CACHE_FOUR_WAY | CACHE_SIZE_8K | CACHE_REPLACE_LRU |

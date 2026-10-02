@@ -9,237 +9,233 @@
 //! \param  cy    y-coordinate
 //! \param  n_max maximum number of iterations
 //! \return       number of performed iterations at coordinate (cx, cy)
-//
-#define ALIGN_TWO(exp1, mant1, exp2, mant2)                                    \
+
+#define LNORM(m, e)                                                            \
   do {                                                                         \
-    if ((exp1) > (exp2)) {                                                     \
-      (mant2) >>= (((exp1) - (exp2)) >> MANT_BITS);                            \
-      (exp2) = (exp1);                                                         \
-    } else if ((exp2) > (exp1)) {                                              \
-      (mant1) >>= (((exp2) - (exp1)) >> MANT_BITS);                            \
-      (exp1) = (exp2);                                                         \
+    if (!((m) & HIDDEN)) {                                                     \
+      myfloat d_ = 0;                                                          \
+      if ((m) < (HIDDEN >> 7)) {                                               \
+        (m) <<= 8;                                                             \
+        d_ = ONE_EXP << 3;                                                     \
+      }                                                                        \
+      if ((m) < (HIDDEN >> 3)) {                                               \
+        (m) <<= 4;                                                             \
+        d_ += ONE_EXP << 2;                                                    \
+      }                                                                        \
+      if ((m) < (HIDDEN >> 1)) {                                               \
+        (m) <<= 2;                                                             \
+        d_ += ONE_EXP << 1;                                                    \
+      }                                                                        \
+      if (!((m) & HIDDEN)) {                                                   \
+        (m) <<= 1;                                                             \
+        d_ += ONE_EXP;                                                         \
+      }                                                                        \
+      if ((e) > d_)                                                            \
+        (e) -= d_;                                                             \
+      else                                                                     \
+        (m) = (e) = 0;                                                         \
     }                                                                          \
   } while (0)
 
-#define NORMALIZE(mant, exp)                                                   \
-  do {                                                                         \
-    if ((mant) == 0) {                                                         \
-      (exp) = 0;                                                               \
-    } else {                                                                   \
-      while ((mant) >= (HIDDEN << 1)) {                                        \
-        (exp) += ONE_EXP;                                                      \
-        (mant) >>= 1;                                                          \
-      }                                                                        \
-      while (((mant) & HIDDEN) == 0) {                                         \
-        if ((exp) <= ONE_EXP) {                                                \
-          (mant) = 0;                                                          \
-          (exp) = 0;                                                           \
-          break;                                                               \
-        }                                                                      \
-        (mant) <<= 1;                                                          \
-        (exp) -= ONE_EXP;                                                      \
-      }                                                                        \
-    }                                                                          \
-  } while (0)
+static inline myfloat calc_add_delta(myfloat a, myfloat d) {
+  const myfloat de = d & EXP_MASK;
+  myfloat ae = a & EXP_MASK;
+  if (!ae)
+    return d;
 
-static inline myfloat calc_add(myfloat a, myfloat b) {
-  uint32_t a_sign = a & SIGN_MASK;
-  uint32_t a_exp = a & EXP_MASK;
-  uint32_t b_exp = b & EXP_MASK;
+  myfloat am = HIDDEN | (a & MANT_MASK), dm = HIDDEN | (d & MANT_MASK), m,
+          s = 0;
 
-  if (a_exp == 0)
-    return b;
-  if (b_exp == 0)
-    return a;
-
-  uint32_t a_mant = HIDDEN | (a & MANT_MASK);
-  uint32_t b_mant = HIDDEN | (b & MANT_MASK);
-
-  ALIGN_TWO(a_exp, a_mant, b_exp, b_mant);
-
-  uint32_t mant, sign;
-  if (a_sign != 0) {
-    if (a_mant > b_mant) {
-      sign = a_sign;
-      mant = a_mant - b_mant;
-    } else {
-      sign = 0;
-      mant = b_mant - a_mant;
+  if (!(a & SIGN_MASK)) {
+    if (ae > de)
+      dm >>= (ae - de) >> MANT_BITS;
+    else if (de > ae) {
+      am >>= (de - ae) >> MANT_BITS;
+      ae = de;
     }
-  } else { // Both are positive
-    sign = 0;
-    mant = a_mant + b_mant;
+    m = am + dm;
+    if (m >= (HIDDEN << 1)) {
+      m >>= 1;
+      ae += ONE_EXP;
+    }
+    return ae | (m - HIDDEN);
   }
 
-  NORMALIZE(mant, a_exp);
+  if (ae > de) {
+    m = am - (dm >> ((ae - de) >> MANT_BITS));
+    s = SIGN_MASK;
+  } else if (de > ae) {
+    m = dm - (am >> ((de - ae) >> MANT_BITS));
+    ae = de;
+  } else if (am > dm) {
+    m = am - dm;
+    s = SIGN_MASK;
+  } else
+    m = dm - am;
 
-  if (a_exp == 0)
-    return 0;
-
-  mant &= ~HIDDEN;
-
-  return sign | a_exp | mant;
+  LNORM(m, ae);
+  return ae ? s | ae | (m - HIDDEN) : 0;
 }
+
 uint16_t calc_mandelbrot_point_soft(myfloat cx, myfloat cy, uint16_t n_max) {
-  const myfloat cx_sign = cx & SIGN_MASK;
-  const myfloat cx_init_exp = cx & EXP_MASK;
-  const myfloat cx_init_mant = (cx & MANT_MASK) | (cx_init_exp ? HIDDEN : 0);
+  const myfloat cxs = cx & SIGN_MASK, cxe = cx & EXP_MASK,
+                cxm = (cx & MANT_MASK) | (cxe ? HIDDEN : 0);
+  const myfloat cys = cy & SIGN_MASK, cye = cy & EXP_MASK,
+                cym = (cy & MANT_MASK) | (cye ? HIDDEN : 0);
+  myfloat xs = cxs, xe = cxe, xm = cxm, ys = cys, ye = cye, ym = cym;
+  myfloat pxs, pxe, pxm, pys, pye, pym;
+  uint_fast16_t n = 0;
 
-  const myfloat cy_sign = cy & SIGN_MASK;
-  const myfloat cy_init_exp = cy & EXP_MASK;
-  const myfloat cy_init_mant = (cy & MANT_MASK) | (cy_init_exp ? HIDDEN : 0);
-
-  myfloat x_sign = cx_sign;
-  myfloat x_exp = cx_init_exp;
-  myfloat x_mant = cx_init_mant;
-
-  myfloat y_sign = cy_sign;
-  myfloat y_exp = cy_init_exp;
-  myfloat y_mant = cy_init_mant;
-
-  uint16_t n = 0;
   while (n < n_max) {
+    if (n & (n - 1)) {
+      if (xm == pxm && ym == pym && xe == pxe && ye == pye && xs == pxs &&
+          ys == pys)
+        return n_max;
+    } else {
+      pxs = xs;
+      pxe = xe;
+      pxm = xm;
+      pys = ys;
+      pye = ye;
+      pym = ym;
+    }
     ++n;
-    if (x_exp >= TWO || y_exp >= TWO)
+
+    const uint32_t a = xm >> 12, b = ym >> 12;
+    myfloat e, tm, ts, xxe = 0, xxm = 0, yye = 0, yym = 0;
+
+    if (xe) {
+      e = xe << 1;
+      xxe = e >= MIN_EXP ? e - MIN_EXP : 0;
+      xxm = a * a;
+      if (xxm & 0x80000000u) {
+        xxe += ONE_EXP;
+        xxm >>= 4;
+      } else
+        xxm >>= 3;
+    }
+    if (ye) {
+      e = ye << 1;
+      yye = e >= MIN_EXP ? e - MIN_EXP : 0;
+      yym = b * b;
+      if (yym & 0x80000000u) {
+        yye += ONE_EXP;
+        yym >>= 4;
+      } else
+        yym >>= 3;
+    }
+
+    if (xxe > yye) {
+      yym >>= (xxe - yye) >> MANT_BITS;
+      yye = xxe;
+    } else if (yye > xxe) {
+      xxm >>= (yye - xxe) >> MANT_BITS;
+      xxe = yye;
+    }
+
+    if (xxe >= FOUR - ONE_EXP && (xxe >= FOUR || xxm + yym >= (HIDDEN << 1)))
       break;
 
-    myfloat xx_exp = 0, xx_mant = 0;
-    if (x_exp) {
-      xx_exp = (x_exp << 1) >= 0x60000000u ? (x_exp << 1) - 0x60000000u : 0;
-      uint32_t x_smant = x_mant >> 12;
-      xx_mant = x_smant * x_smant;
-      if (xx_mant & 0x80000000u) {
-        xx_exp += ONE_EXP;
-        xx_mant >>= 4;
-      } else {
-        xx_mant >>= 3;
-      }
+    myfloat xys = 0, xye = 0, xym = 0;
+    if (xe && ye) {
+      e = xe + ye;
+      xys = xs ^ ys;
+      xye = (e >= MIN_EXP ? e - MIN_EXP : 0) + ONE_EXP;
+      xym = a * b;
+      if (xym & 0x80000000u) {
+        xye += ONE_EXP;
+        xym >>= 4;
+      } else
+        xym >>= 3;
     }
 
-    myfloat yy_exp = 0, yy_mant = 0;
-    if (y_exp) {
-      yy_exp = (y_exp << 1) >= 0x60000000u ? (y_exp << 1) - 0x60000000u : 0;
-      uint32_t y_smant = y_mant >> 12;
-      yy_mant = y_smant * y_smant;
-      if (yy_mant & 0x80000000u) {
-        yy_exp += ONE_EXP;
-        yy_mant >>= 4;
-      } else {
-        yy_mant >>= 3;
-      }
-    }
-
-    myfloat align_xx_exp = xx_exp;
-    myfloat align_yy_exp = yy_exp;
-
-    if (align_xx_exp > align_yy_exp) {
-      yy_mant >>= ((align_xx_exp - align_yy_exp) >> MANT_BITS);
-      align_yy_exp = align_xx_exp;
-    } else if (align_yy_exp > align_xx_exp) {
-      xx_mant >>= ((align_yy_exp - align_xx_exp) >> MANT_BITS);
-      align_xx_exp = align_yy_exp;
-    }
-
-    if (align_xx_exp << 05000000u) {
-      n = n_max;
-      break;
-    }
-    myfloat sum_exp = align_xx_exp;
-    if (xx_mant + yy_mant >= (HIDDEN << 1)) {
-      sum_exp += ONE_EXP;
-    }
-    if (sum_exp >= FOUR)
-      break;
-
-    myfloat xy_sign = 0, xy_exp = 0, xy_mant = 0;
-    if (x_exp && y_exp) {
-      xy_sign = x_sign ^ y_sign;
-      xy_exp =
-          (x_exp + y_exp) >= 0x60000000u ? (x_exp + y_exp) - 0x60000000u : 0;
-      uint32_t x_smant = x_mant >> 12;
-      uint32_t y_smant = y_mant >> 12;
-      xy_mant = x_smant * y_smant;
-      if (xy_mant & 0x80000000u) {
-        xy_exp += ONE_EXP;
-        xy_mant >>= 4;
-      } else {
-        xy_mant >>= 3;
-      }
-      xy_exp += ONE_EXP; // multiply by 2
-    }
-
-    myfloat tmp_x_sign, tmp_x_exp = align_xx_exp, tmp_x_mant;
-    if (xx_mant >= yy_mant) {
-      tmp_x_mant = xx_mant - yy_mant;
-      tmp_x_sign = 0;
+    if (xxm >= yym) {
+      tm = xxm - yym;
+      ts = 0;
     } else {
-      tmp_x_mant = yy_mant - xx_mant;
-      tmp_x_sign = SIGN_MASK;
+      tm = yym - xxm;
+      ts = SIGN_MASK;
     }
-    NORMALIZE(tmp_x_mant, tmp_x_exp);
+    LNORM(tm, xxe);
 
-    myfloat cx_t_exp = cx_init_exp;
-    myfloat cx_t_mant = cx_init_mant;
-
-    if (!tmp_x_exp) {
-      x_sign = cx_sign;
-      x_exp = cx_t_exp;
-      x_mant = cx_t_mant;
-    } else if (!cx_t_exp) {
-      x_sign = tmp_x_sign;
-      x_exp = tmp_x_exp;
-      x_mant = tmp_x_mant;
+    if (!xxe) {
+      xs = cxs;
+      xe = cxe;
+      xm = cxm;
+    } else if (!cxe) {
+      xs = ts;
+      xe = xxe;
+      xm = tm;
     } else {
-      ALIGN_TWO(tmp_x_exp, tmp_x_mant, cx_t_exp, cx_t_mant);
-      if (tmp_x_sign == cx_sign) {
-        x_mant = tmp_x_mant + cx_t_mant;
-        x_sign = tmp_x_sign;
-      } else {
-        if (tmp_x_mant >= cx_t_mant) {
-          x_mant = tmp_x_mant - cx_t_mant;
-          x_sign = tmp_x_sign;
-        } else {
-          x_mant = cx_t_mant - tmp_x_mant;
-          x_sign = cx_sign;
+      if (xxe > cxe)
+        xm = cxm >> ((xxe - cxe) >> MANT_BITS);
+      else {
+        xm = cxm;
+        if (cxe > xxe) {
+          tm >>= (cxe - xxe) >> MANT_BITS;
+          xxe = cxe;
         }
       }
-      x_exp = tmp_x_exp;
-      NORMALIZE(x_mant, x_exp);
+      xe = xxe;
+      if (ts == cxs) {
+        xs = ts;
+        xm += tm;
+        if (xm >= (HIDDEN << 1)) {
+          xm >>= 1;
+          xe += ONE_EXP;
+        }
+      } else {
+        if (tm >= xm) {
+          xm = tm - xm;
+          xs = ts;
+        } else {
+          xm -= tm;
+          xs = cxs;
+        }
+        LNORM(xm, xe);
+      }
     }
 
-    myfloat cy_t_exp = cy_init_exp;
-    myfloat cy_t_mant = cy_init_mant;
-
-    if (!xy_exp) {
-      y_sign = cy_sign;
-      y_exp = cy_t_exp;
-      y_mant = cy_t_mant;
-    } else if (!cy_t_exp) {
-      y_sign = xy_sign;
-      y_exp = xy_exp;
-      y_mant = xy_mant;
+    if (!xye) {
+      ys = cys;
+      ye = cye;
+      ym = cym;
+    } else if (!cye) {
+      ys = xys;
+      ye = xye;
+      ym = xym;
     } else {
-      ALIGN_TWO(xy_exp, xy_mant, cy_t_exp, cy_t_mant);
-      if (xy_sign == cy_sign) {
-        y_mant = xy_mant + cy_t_mant;
-        y_sign = xy_sign;
-      } else {
-        if (xy_mant >= cy_t_mant) {
-          y_mant = xy_mant - cy_t_mant;
-          y_sign = xy_sign;
-        } else {
-          y_mant = cy_t_mant - xy_mant;
-          y_sign = cy_sign;
+      if (xye > cye)
+        ym = cym >> ((xye - cye) >> MANT_BITS);
+      else {
+        ym = cym;
+        if (cye > xye) {
+          xym >>= (cye - xye) >> MANT_BITS;
+          xye = cye;
         }
       }
-      y_exp = xy_exp;
-      NORMALIZE(y_mant, y_exp);
+      ye = xye;
+      if (xys == cys) {
+        ys = xys;
+        ym += xym;
+        if (ym >= (HIDDEN << 1)) {
+          ym >>= 1;
+          ye += ONE_EXP;
+        }
+      } else {
+        if (xym >= ym) {
+          ym = xym - ym;
+          ys = xys;
+        } else {
+          ym -= xym;
+          ys = cys;
+        }
+        LNORM(ym, ye);
+      }
     }
   }
   return n;
-}
-
-//! \brief  Map number of performed iterations to black and white
+} //! \brief  Map number of performed iterations to black and white
 //! \param  iter  performed number of iterations
 //! \param  n_max maximum number of iterations
 //! \return       colour
@@ -334,8 +330,8 @@ void draw_fractal(rgb565 *fbuf, int width, int height, calc_frac_point_p cfp_p,
     for (int i = 0; i < width; ++i) {
       uint16_t n_iter = (*cfp_p)(cx, cy, n_max);
       *(pixel++) = (*i2c_p)(n_iter, n_max);
-      cx = calc_add(cx, delta);
+      cx = calc_add_delta(cx, delta);
     }
-    cy = calc_add(cy, delta); /* was: cy += ... */
+    cy = calc_add_delta(cy, delta); /* was: cy += ... */
   }
 }

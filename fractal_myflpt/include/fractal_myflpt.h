@@ -36,5 +36,6 @@ void draw_fractal(rgb565 *fbuf, int width, int height, calc_frac_point_p cfp_p,
 #define MAX_POS 0xFFFFFFFFu
 #define TWO 0x68000000u
 #define FOUR 0x70000000u
+#define MIN_EXP 0x60000000u
 
 #endif // FRACTAL_MYFLPT_H
